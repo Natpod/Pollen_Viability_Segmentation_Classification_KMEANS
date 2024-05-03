@@ -88,7 +88,7 @@ def entrenar_kmeans():
      # df_color_circles : guarda infromacion sobre los valores rgb de todos los pixeles separados por cada circulo, se preprocesa para hacer clustering no supervisado
     # df_info_circles : guarda informacion sobre las coordenadas de los circulos y en qué imagen aparecen, se usará para anotar las imágenes
        
-    df_color_circles = pd.DataFrame(columns=["r", "g", "b", "Ctag"] )
+    df_color_circles = pd.DataFrame(columns=["l", "a", "b", "Ctag"] )
     df_info_circles = pd.DataFrame(columns=["Ctag", "x", "y", "r", "filename"])
 
     #####################################################################################################################
@@ -103,6 +103,7 @@ def entrenar_kmeans():
 
     for filename in onlyfiles:
 
+        
 
         if filename:
             
@@ -115,7 +116,9 @@ def entrenar_kmeans():
             try:
                 # Convertir a escala de grises
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
- 
+
+                # Segunda conversión para guardar los valores CILAB - espacio de color más parecido a la percepción humana
+                cilab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB) 
                 
                 
                 # Aplicar un suavizado para reducir el ruido
@@ -148,42 +151,29 @@ def entrenar_kmeans():
 
                             # Extraer el color promedio de la región del círculo
                             try:
-                                roi = image[y - r:y + r, x - r:x + r]
+                                roi = cilab[y - r:y + r, x - r:x + r]
 
                             except:
                                 1
                             
-                            b,g,red    = roi[:, :, 0].flatten(), roi[:, :, 1].flatten(), roi[:, :, 2].flatten() # For RGB image
+                            l,a,b    = np.median(roi[:, :, 0].flatten()), np.median(roi[:, :, 1].flatten()), np.median(roi[:, :, 2].flatten()) # For RGB image
 
                             # anexar a df 
                             df_info_circles = pd.concat([df_info_circles, pd.DataFrame([[tag_circle, x, y, r, filename]], columns =["Ctag", "x", "y", "r", "filename"])], ignore_index = True, axis = 0 )
-                            dict_tmp = {"r" : red, "g": g, "b" : b, "Ctag" : [tag_circle]*len(red) }
+                            dict_tmp = {"l" : l, "a": a, "b" : b, "Ctag" : [tag_circle]*len(l) }
                             df_color_circles = pd.concat([df_color_circles, pd.DataFrame(data=dict_tmp)], ignore_index = True, axis = 0  )
                 
+                tag_circle = 0
 
             except:
                 pass
     
     ###################################################################################
     # SEGUNDA PARTE - ESTANDARIZACION DE VALORES RGB PARA LOS CIRCULOS Y CLUSTERIZACIÓN
+
+    df_to_cluster = df_color_circles
     
-    # 1) Estandarizacion con https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.vq.whiten.html
-    # Asume misma desviacion por canal de colores en los circulos - decisión logica si proceden crops de misma foto
-
-    print("Scaling color channels in cell rois...\n")
     
-    df_processed = whiten(np.array(df_color_circles[['r', "g", "b"]].values.tolist()))
-    df_color_circles['r_scaled'] = df_processed[:, 0]
-    df_color_circles['g_scaled'] = df_processed[:, 1]
-    df_color_circles['b_scaled'] = df_processed[:, 2]
-
-    # sacar promedio rgb roi para que todas las observaciones tengan la misma dimension
-    df_to_cluster = pd.DataFrame(columns=["r_scaled", "g_scaled", "b_scaled", "Ctag"])
-    
-    print("Getting mean rgb values per circle...\n")
-
-    df_to_cluster = df_color_circles.groupby(["Ctag"], sort=False, as_index=False).agg({"r_scaled":"median","g_scaled":"median", "b_scaled":"median"})
-
     ##########################################################################
     # TERCERA PARTE : ENTRENAR y guardar modelo de  KMEANS
     # KMEANS
@@ -191,8 +181,8 @@ def entrenar_kmeans():
     print("Performing kmeans...\n")
 
     km = KMeans( n_clusters=3 ) # 3 clasificaciones
-    km.fit(df_to_cluster[["r_scaled", "g_scaled", "b_scaled"]])
-    df_to_cluster['label'] = km.predict(df_to_cluster[["r_scaled", "g_scaled", "b_scaled"]])
+    km.fit(df_to_cluster[["l", "a", "b"]])
+    df_to_cluster['label'] = km.predict(df_to_cluster[["l", "a", "b"]])
     
     
     # save model
@@ -202,25 +192,6 @@ def entrenar_kmeans():
     # Muestra un mensaje de confirmación
     tk.messagebox.showinfo("Modelo de KMEANS guardado", f"La imagen y estadisticas de la imagen se ha guardado en el directorio {ruta_guardar}")
     
-    
-    # print("Getting cluster centers...\n")
-    
-    # analisis 
-
-    # Plotear Referencia de color de cada clase
-    # Volver a multiplicar por std para sacar valor RGB
-    # colors = []
-    # r_std, g_std, b_std = df_to_cluster[["r_scaled", "g_scaled", "b_scaled"]].std() 
-    
-    # for cluster_center in km.cluster_centers_.tolist():
-    #     scaled_r, scaled_g, scaled_b = cluster_center
-    #     colors.append((
-    #     round(scaled_r / r_std * 255),
-    #     round(scaled_g / g_std * 255),
-    #     round(scaled_b / b_std * 255)
-    #     ))
-    # print("Cluster centers \n------\n", str("-".join[colors[0]]), str("-".join[colors[1]]), str("-".join[colors[2]]))
-
     del df_to_cluster
     del df_color_circles
     return
@@ -238,12 +209,12 @@ def predecir_cl():
     # df_color_circles : guarda infromacion sobre los valores rgb de todos los pixeles separados por cada circulo, se preprocesa para hacer clustering no supervisado
     # df_info_circles : guarda informacion sobre las coordenadas de los circulos y en qué imagen aparecen, se usará para anotar las imágenes
     df_info_foto = pd.DataFrame(columns = columnas_excel )         
-    df_color_circles = pd.DataFrame(columns=["r", "g", "b", "Ctag"] )
+    df_color_circles = pd.DataFrame(columns=["l", "a", "b", "Ctag"] )
     df_info_circles = pd.DataFrame(columns=["Ctag", "x", "y", "r", "filename"])
 
     # Crea carpeta de resultados general
-    # ruta_guardar = input("Escribe el nombre del directorio para guardar las fotos \n-----------------------")
-    ruta_guardar = "C:\\Users\\Usuario\\Desktop\\Fotos para contar\\output_segundo_modelo"
+    ruta_guardar = filedialog.askdirectory(title="Directorio para guardar las fotos")
+
     try:
         os.mkdir(ruta_guardar) #
     except:
@@ -259,10 +230,9 @@ def predecir_cl():
 
 
     # pregunta por directorio y saca imagenes
-    # dir_path = filedialog.askdirectory(title="Arbol de directorios con fotos para contaje")
+    dir_path = filedialog.askdirectory(title="Arbol de directorios con fotos para contaje")
     
-    #dir_path = "C:\\Users\\Usuario\\Desktop\\Fotos para contar\\divididas\\ttc_12\\analisis_ttc"
-    dir_path = "C:\\Users\\Usuario\\Desktop\\Fotos para contar\\divididas\\evans_12\\analisis_evans"
+
     df_todas_fotos = pd.DataFrame(columns=["experiment", "replica", "filename", "nº circulos", "nº circulos c1", "nº circulos c2", "nº circulos c3"])
     f_i = 0 # file index
 
@@ -312,10 +282,8 @@ def predecir_cl():
 
                     # Convertir a escala de grises
                     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) #
-                
+                    cilab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
                     
-                    # ECUALIZACION
-                    #ecualizada = cv2.equalizeHist(gray) #
                     
                     # Aplicar un suavizado para reducir el ruido
                     blurred = cv2.GaussianBlur(gray, (5, 5), 0) #
@@ -354,7 +322,7 @@ def predecir_cl():
 
                                 # Extraer el color promedio de la región del círculo
                                 try:
-                                    roi = image[y - r:y + r, x - r:x + r]
+                                    roi = cilab[y - r:y + r, x - r:x + r]
                                     # only circle:
                                     #
                                     # mask = np.zeros(image.shape, dtype=np.uint8)
@@ -365,11 +333,11 @@ def predecir_cl():
                                     1
                                 #color = calculate_average_color(roi)
 
-                                b, g, red    = roi[:, :, 0].flatten(), roi[:, :, 1].flatten(), roi[:, :, 2].flatten() # For RGB image
+                                l, a, b    = np.median(roi[:, :, 0].flatten()), np.median(roi[:, :, 1].flatten()), np.median(roi[:, :, 2].flatten()) # For RGB image
 
                                 # anexar a df 
                                 df_info_circles = pd.concat([df_info_circles, pd.DataFrame([[ctag_i, x, y, r, filename]], columns =["Ctag", "x", "y", "r", "filename"])], ignore_index = True, axis = 0 )
-                                dict_tmp = {"r" : red, "g": g, "b" : b, "Ctag" : [ctag_i]*len(red) }
+                                dict_tmp = {"l" : l, "a": a, "b" : b, "Ctag" : [ctag_i]*len(l) }
                                 df_color_circles = pd.concat([df_color_circles, pd.DataFrame(data=dict_tmp)], ignore_index = True, axis = 0  )
                     
                     
@@ -383,30 +351,13 @@ def predecir_cl():
                     ###################################################################################
                     # SEGUNDA PARTE - ESTANDARIZACION DE VALORES RGB PARA LOS CIRCULOS Y CLUSTERIZACIÓN
                     
-                    # 1) Estandarizacion con https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.vq.whiten.html
-                    # Asume misma desviacion por canal de colores en los circulos - decisión logica si proceden crops de misma foto
-
-                    print("Scaling color channels in cell rois...\n")
+                    df_to_cluster = df_color_circles
                     
-                    df_processed = whiten(np.array(df_color_circles[['r', "g", "b"]].values.tolist()))
-                    print(df_processed)
-                    df_color_circles['r_scaled'] = df_processed[:, 0]
-                    df_color_circles['g_scaled'] = df_processed[:, 1]
-                    df_color_circles['b_scaled'] = df_processed[:, 2]
-
-                    
-                    # sacar promedio rgb roi para que todas las observaciones tengan la misma dimension
-                    df_to_cluster = pd.DataFrame(columns=["r_scaled", "g_scaled", "b_scaled", "Ctag"])
-                    
-                    print("Getting mean rgb values per circle...\n")
-
-                    df_to_cluster = df_color_circles.groupby(["Ctag"], sort=False, as_index=False).agg({"r_scaled":"mean","g_scaled":"mean", "b_scaled":"mean"})
-                    df_color_circles = pd.DataFrame(columns=["r", "g", "b", "Ctag"] )
                     
                     # # KMEANS PREDICT WITH LOADED MODEL
 
                     print("Performing kmeans...\n")
-                    df_to_cluster['label'] = loaded_model.predict(df_to_cluster[["r_scaled", "g_scaled", "b_scaled"]])
+                    df_to_cluster['label'] = loaded_model.predict(df_to_cluster[["l", "a", "b"]])
                     
 
                     # ## inner join coordenadas radio y clasificacion
